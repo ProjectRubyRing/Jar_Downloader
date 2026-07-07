@@ -1,0 +1,11 @@
+# ===========================================================
+# jar_manager export list (再取り込み可能な TSV 形式)
+# generated : 2026-07-07 21:47:27
+# scan-dir  : samples/lib_demo
+# columns   : groupId	artifactId	version	packaging	classifier	targetDir	fileName
+# classifier が無い場合は空欄。fileName 空欄で Maven 標準名を自動生成。
+# groupId が UNKNOWN の行は座標未確定。validate 前に手動補正を推奨。
+# ===========================================================
+# groupId	artifactId	version	packaging	classifier	targetDir	fileName
+UNKNOWN	spring-core	5.3.30	jar		samples/lib_demo	spring-core-5.3.30.jar
+com.fasterxml.jackson.core	jackson-databind	2.15.3	jar		samples/lib_demo	jackson-databind-2.15.3.jar
