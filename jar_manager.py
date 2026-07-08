@@ -669,7 +669,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         prog="jar_manager.py",
         description="Maven 座標に基づく JAR ダウンロード / 退避 / 一覧生成ツール")
     p.add_argument("--mode", required=True,
-                   choices=["download", "export", "validate"])
+                   choices=["download", "export", "validate", "report"])
     p.add_argument("--list", dest="list_file")
     p.add_argument("--target-dir")
     p.add_argument("--scan-dir")
@@ -683,7 +683,10 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--allow-dir", action="append", default=[],
                    help="許可する配置先 (path traversal 対策、複数可)")
     p.add_argument("--include-old", action="store_true",
-                   help="export で old 配下も対象にする")
+                   help="export / report で old 配下も対象にする")
+    p.add_argument("--online", action="store_true",
+                   help="report で Maven Central 照合により座標・概要を補完し "
+                        "取得 URL を実在確認する")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--log-file")
     return p.parse_args(argv)
@@ -706,6 +709,21 @@ def main(argv: Optional[List[str]] = None) -> int:
                 raise JarManagerError("--scan-dir と --output が必要です")
             return do_export(args.scan_dir, args.output, args.include_old,
                              args.target_dir, logger)
+
+        if args.mode == "report":
+            if not args.scan_dir or not args.output:
+                raise JarManagerError("--scan-dir と --output が必要です")
+            try:
+                import jar_report
+            except ImportError as exc:
+                raise JarManagerError(
+                    f"jar_report モジュールを読み込めません: {exc}")
+            try:
+                return jar_report.generate(
+                    args.scan_dir, args.output, args.online, repos,
+                    args.timeout, args.include_old, logger)
+            except (ValueError, RuntimeError) as exc:
+                raise JarManagerError(str(exc))
 
         if args.mode == "download":
             if not args.list_file:

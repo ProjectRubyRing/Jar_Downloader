@@ -27,6 +27,7 @@ RETRY="3"
 CHECKSUM_MODE="warn"
 LOG_FILE=""
 INCLUDE_OLD="false"
+ONLINE="false"
 declare -a REPOS=()
 declare -a ALLOW_DIRS=()
 
@@ -62,27 +63,31 @@ die() { error "$@"; exit 1; }
 usage() {
   cat <<'EOF'
 使い方:
-  jar_manager.sh --mode <download|export|validate> [options]
+  jar_manager.sh --mode <download|export|validate|report> [options]
 
 モード:
   download   リストに基づき JAR をダウンロード・配置 (--list, --target-dir)
   export     ディレクトリを走査し再取り込み可能なリストを生成 (--scan-dir, --output)
   validate   リストの書式・必須項目を検証 (--list)
+  report     ディレクトリを走査し Excel レポートを生成 (--scan-dir, --output)
+             取得 URL・ライブラリ概要を出力。groupId/version 欠落時は推定補完。
 
 オプション:
   --mode <mode>            動作モード (必須)
   --list <file>            入力リストファイル (download / validate)
   --target-dir <dir>       配置先ディレクトリ (list の targetDir 空欄時の既定)
-  --scan-dir <dir>         export の走査対象ディレクトリ
-  --output <file>          export の出力リストファイル
-  --engine <python|shell|java>   実装方式 (既定: python)
+  --scan-dir <dir>         export / report の走査対象ディレクトリ
+  --output <file>          export のリスト / report の xlsx 出力先
+  --engine <python|shell|java>   実装方式 (既定: python。report は python 固定)
   --dry-run                実際の操作をせず実行予定内容のみ表示
   --repo <url>             リポジトリ base URL (複数指定可、優先順)
   --timeout <sec>          HTTP タイムアウト秒 (既定: 30)
   --retry <n>              ダウンロード再試行回数 (既定: 3)
   --checksum-mode <warn|strict|skip>   チェックサム検証方針 (既定: warn)
   --allow-dir <dir>        許可する配置先 (path traversal 対策、複数可)
-  --include-old            export で old 配下も対象にする (既定: 除外)
+  --include-old            export / report で old 配下も対象にする (既定: 除外)
+  --online                 report で Maven Central 照合により座標・概要を補完し
+                           取得 URL を実在確認する (要ネットワーク)
   --log-file <file>        ログ出力ファイル (標準出力と併用)
   --help                   このヘルプ
 
@@ -91,6 +96,8 @@ usage() {
   ./jar_manager.sh --mode download --list jars.tsv --target-dir /opt/app/lib --engine shell
   ./jar_manager.sh --mode export --scan-dir /opt/app/lib --output jars_export.tsv --engine python
   ./jar_manager.sh --mode validate --list jars.tsv
+  ./jar_manager.sh --mode report --scan-dir /opt/app/lib --output jars_report.xlsx
+  ./jar_manager.sh --mode report --scan-dir /opt/app/lib --output jars_report.xlsx --online
   ./jar_manager.sh --mode download --list jars.tsv --target-dir /opt/app/lib --dry-run
 EOF
 }
@@ -112,6 +119,7 @@ parse_args() {
       --checksum-mode) CHECKSUM_MODE="${2:-}"; shift 2;;
       --allow-dir)     ALLOW_DIRS+=("${2:-}"); shift 2;;
       --include-old)   INCLUDE_OLD="true"; shift;;
+      --online)        ONLINE="true"; shift;;
       --log-file)      LOG_FILE="${2:-}"; shift 2;;
       --help|-h)       usage; exit 0;;
       *) die "不明なオプション: $1 (--help 参照)";;
@@ -119,7 +127,7 @@ parse_args() {
   done
 
   [[ -n "${MODE}" ]] || { usage; die "--mode は必須です"; }
-  case "${MODE}" in download|export|validate) ;; *) die "不正な --mode: ${MODE}";; esac
+  case "${MODE}" in download|export|validate|report) ;; *) die "不正な --mode: ${MODE}";; esac
   case "${ENGINE}" in python|shell|java) ;; *) die "不正な --engine: ${ENGINE}";; esac
   case "${CHECKSUM_MODE}" in warn|strict|skip) ;; *) die "不正な --checksum-mode";; esac
 
@@ -156,6 +164,7 @@ run_python_engine() {
   args+=(--timeout "${TIMEOUT}" --retry "${RETRY}" --checksum-mode "${CHECKSUM_MODE}")
   [[ "${DRY_RUN}"     == "true" ]] && args+=(--dry-run)
   [[ "${INCLUDE_OLD}" == "true" ]] && args+=(--include-old)
+  [[ "${ONLINE}"      == "true" ]] && args+=(--online)
   local r
   for r in "${REPOS[@]}"; do args+=(--repo "${r}"); done
   local d
@@ -627,6 +636,13 @@ run_shell_engine() {
 # ============================================================================
 main() {
   parse_args "$@"
+  # report は Excel 生成のため Python 実装固定 (shell/java 実装は持たない)。
+  if [[ "${MODE}" == "report" ]]; then
+    [[ "${ENGINE}" != "python" ]] && \
+      info "report は Python エンジンで実行します (engine=${ENGINE} 指定は無視)"
+    run_python_engine
+    return
+  fi
   case "${ENGINE}" in
     python) run_python_engine;;
     shell)  run_shell_engine;;
