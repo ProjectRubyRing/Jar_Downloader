@@ -7,17 +7,25 @@ Maven 座標に基づき、複数の Java OSS JAR を指定バージョンでダ
 - `--engine shell`  … Bash のみで完結する実装
 - `--engine java`   … export のメタデータ抽出で Java を補助利用（無ければ明確にエラー）
 
+さらに `--mode report` で、配置済み JAR を走査して **取得 URL・ライブラリ概要・
+Maven 座標を美しい Excel (.xlsx) に出力** できる（`jar_report.py` / 要 `openpyxl`）。
+groupId やバージョンが欠落していても、ファイル名・既知マッピング・（`--online` 時は）
+Maven Central 照合から座標を推定して補完する。
+
 ## 1. ディレクトリ構成
 
 ```
 Jar_Downloader/
 ├── jar_manager.sh              # メイン実行スクリプト（--engine で方式切替）
-├── jar_manager.py              # Python 補助実装（標準エンジン）
+├── jar_manager.py              # Python 補助実装（標準エンジン・標準ライブラリのみ）
+├── jar_report.py               # report モード実装（Excel 出力・要 openpyxl）
 ├── java/
 │   └── JarMetaReader.java      # Java 補助（pom.properties 抽出サンプル）
 ├── samples/
 │   ├── jars.tsv                # 入力リストサンプル
-│   └── jars_export.tsv         # export 生成例
+│   ├── jars_export.tsv         # export 生成例
+│   ├── make_demo_jars.py       # report 動作確認用のダミー JAR 生成
+│   └── jars_report_sample.xlsx # report 出力サンプル
 └── README.md
 ```
 
@@ -50,11 +58,12 @@ Jar_Downloader/
 
 | オプション | 説明 |
 |---|---|
-| `--mode` | `download` / `export` / `validate`（必須）|
+| `--mode` | `download` / `export` / `validate` / `report`（必須）|
 | `--list` | 入力リスト（download / validate）|
 | `--target-dir` | 配置先。list の targetDir 空欄時の既定 |
-| `--scan-dir` | export の走査対象 |
-| `--output` | export の出力先 |
+| `--scan-dir` | export / report の走査対象 |
+| `--output` | export のリスト / report の xlsx 出力先 |
+| `--online` | report で Maven Central 照合による座標・概要補完と URL 実在確認 |
 | `--engine` | `python`（既定）/ `shell` / `java` |
 | `--dry-run` | 実操作せず予定内容のみ表示 |
 | `--repo` | リポジトリ base URL（複数可・優先順）|
@@ -78,6 +87,11 @@ Jar_Downloader/
 # 既存 JAR を走査してリスト生成（再取り込み可能）
 ./jar_manager.sh --mode export --scan-dir /opt/app/lib --output jars_export.tsv --engine python
 
+# 配置済み JAR を Excel レポート化（取得 URL・ライブラリ概要・座標推定を出力）
+./jar_manager.sh --mode report --scan-dir /opt/app/lib --output jars_report.xlsx
+# ネットワークを使い Maven Central 照合で座標・概要を補完し URL を実在確認
+./jar_manager.sh --mode report --scan-dir /opt/app/lib --output jars_report.xlsx --online
+
 # リスト検証
 ./jar_manager.sh --mode validate --list samples/jars.tsv
 
@@ -88,6 +102,41 @@ Jar_Downloader/
 ./jar_manager.sh --mode download --list samples/jars.tsv --target-dir /opt/app/lib \
   --allow-dir /opt/app/lib --checksum-mode strict --log-file /var/log/jar_manager.log
 ```
+
+## 4.1 report モード（JAR インベントリの Excel 出力）
+
+指定ディレクトリ配下の JAR を再帰的に走査し、1 JAR = 1 行の一覧を美しい Excel
+（`.xlsx`）に出力する。`jar_report.py` が担当し、Excel 生成に **`openpyxl`** を用いる
+（`pip install openpyxl`）。座標解決・メタデータ抽出部分は標準ライブラリのみで動作。
+
+**出力カラム**: `No. / ファイル名 / groupId / artifactId / version / classifier /
+packaging / ライブラリ名 / 概要 / 提供元 / ライセンス / プロジェクト URL /
+座標の判定元 / 推定 / 取得 URL / 取得元リポジトリ / URL 確認 / サイズ / SHA-1 /
+配置ディレクトリ / 備考`。「凡例」シートに色分けとカラム説明を同梱。
+
+**座標の解決順（groupId / version が欠落していても推測）**:
+
+1. JAR 内 `META-INF/maven/**/pom.properties`（最も確実）
+2. JAR 内 `META-INF/maven/**/pom.xml`（parent の groupId/version 継承も考慮）
+3. `MANIFEST.MF`（`Implementation-*` / `Bundle-*` から version 等を補完）
+4. 既知アーティファクト → groupId マッピング（オフライン）
+5. `--online` 時のみ Maven Central へ **SHA-1 照合**（リネーム済みでも正確に特定）→
+   座標照合、および `pom` 取得による概要・ライセンス補完
+6. ファイル名からの推定（`artifactId-version[-classifier].jar`）
+
+**取得 URL**: 解決した座標から Maven 標準レイアウトで生成。`--online` 時は各リポジトリへ
+`HEAD` で実在確認し、実在した最初のものを採用（未検出・offline・座標未確定は「URL 確認」
+列に明示）。
+
+**行の色分け**: groupId 未確定（`UNKNOWN`）＝橙、座標を推定補完＝黄、通常＝交互の縞。
+
+```bash
+# 動作確認（ネットワーク不要）: ダミー JAR を生成して Excel を作る
+python3 samples/make_demo_jars.py /tmp/lib_demo
+./jar_manager.sh --mode report --scan-dir /tmp/lib_demo --output /tmp/jars_report.xlsx
+```
+
+出力例は `samples/jars_report_sample.xlsx` を参照。
 
 ## 5. エラー時の挙動と終了コード
 
@@ -115,6 +164,8 @@ sudo dnf install -y python3 curl unzip
 sudo dnf install -y wget
 # Java 補助（--engine java）を使う場合のみ
 sudo dnf install -y java-17-openjdk-devel
+# report モード（Excel 出力）を使う場合のみ
+python3 -m pip install --user openpyxl
 
 # 実行権限
 chmod +x jar_manager.sh
