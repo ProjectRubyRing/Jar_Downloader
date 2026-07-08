@@ -13,6 +13,7 @@
 #     slf4j-api-2.0.9.jar   : MANIFEST (OSGi Bundle-*) のみ
 #     guava-32.1.3-jre.jar  : groupId 無し → 既知マッピングで推定
 #     commons-lang3.jar     : version 無し → MANIFEST から補完
+#     ojdbc11-23.3.0.0.jar  : 商用ベンダー製 (Oracle・独自ライセンス) → ベンダー系
 #     mystery-lib-1.0.jar   : 手掛かり乏しく groupId 未確定 (UNKNOWN)
 #     old/.../log4j-core-2.17.1.jar : old 配下 (既定では走査対象外)
 # ============================================================================
@@ -75,6 +76,18 @@ def main(out_dir):
             "Implementation-Title: Apache Commons Lang\r\n"
             "Implementation-Version: 3.14.0\r\n"
             "Implementation-Vendor: The Apache Software Foundation\r\n",
+    })
+
+    _jar(out_dir, "ojdbc11-23.3.0.0.jar", {
+        "META-INF/MANIFEST.MF":
+            "Manifest-Version: 1.0\r\n"
+            "Implementation-Title: JDBC\r\n"
+            "Implementation-Vendor: Oracle Corporation\r\n"
+            "Implementation-Version: 23.3.0.0\r\n"
+            "Bundle-License: Oracle Free Use Terms and Conditions\r\n",
+        "META-INF/maven/com.oracle.database.jdbc/ojdbc11/pom.properties":
+            "groupId=com.oracle.database.jdbc\n"
+            "artifactId=ojdbc11\nversion=23.3.0.0\n",
     })
 
     _jar(out_dir, "mystery-lib-1.0.jar", {

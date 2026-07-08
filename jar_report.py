@@ -167,6 +167,80 @@ REPO_DISPLAY_NAMES: Dict[str, str] = {
 
 UNKNOWN = "UNKNOWN"
 
+# ----------------------------------------------------------------------------
+# 提供形態の判定 (OSS / ベンダー系) 用のヒューリスティック
+#   ライセンス > groupId プレフィックス > ベンダー名 の順に判定する。
+#   あくまで推定であり、確定情報 (ライセンス) が最優先。
+# ----------------------------------------------------------------------------
+# OSS ライセンスを示すキーワード (小文字で部分一致)。
+OSS_LICENSE_MARKERS = (
+    "apache", "mit license", "mit ", "(mit)", "bsd", "gnu", "gpl", "lgpl",
+    "epl", "eclipse public", "mpl", "mozilla public", "cddl", "isc",
+    "unlicense", "public domain", "wtfpl", "artistic", "creative commons",
+    "eupl", "common public", "cc0", "zlib", "boost software", "edl",
+)
+# 商用/ベンダー独自ライセンスを示すキーワード。
+VENDOR_LICENSE_MARKERS = (
+    "proprietary", "commercial", "all rights reserved", "binary code license",
+    "end user license", "eula", "otn license", "oracle technology network",
+    "oracle free use", "subject to license terms",
+)
+# OSS を提供する代表的な groupId プレフィックス。
+OSS_GROUP_PREFIXES = (
+    "org.apache", "org.springframework", "com.google", "com.fasterxml",
+    "org.slf4j", "ch.qos", "org.hibernate", "io.netty", "org.yaml",
+    "commons-", "org.bouncycastle", "org.eclipse", "org.junit", "junit",
+    "org.jetbrains", "org.mockito", "org.assertj", "io.projectreactor",
+    "org.reactivestreams", "org.jboss", "org.ow2", "org.json", "joda-time",
+    "org.postgresql", "org.mariadb", "com.squareup", "org.antlr", "antlr",
+    "javax.", "jakarta.", "org.glassfish", "org.projectlombok", "com.zaxxer",
+    "org.checkerframework", "io.micrometer", "org.osgi", "com.h2database",
+    "org.mongodb", "redis.clients", "org.freemarker", "org.thymeleaf",
+)
+# 商用ベンダー製を示す groupId プレフィックス。
+VENDOR_GROUP_PREFIXES = (
+    "com.oracle", "oracle", "com.ibm", "com.microsoft", "com.sap", "com.bea",
+    "weblogic", "com.tibco", "com.informatica", "com.datastax.dse",
+    "com.atlassian", "com.crystaldecisions", "com.jetbrains", "com.mathworks",
+)
+# ベンダー名 (Implementation-Vendor 等) からの弱い判定キーワード。
+VENDOR_NAME_MARKERS = ("oracle", "microsoft", "ibm", " sap", "tibco",
+                       "broadcom", "informatica", "micro focus", "vmware")
+OSS_VENDOR_NAME_MARKERS = ("apache", "eclipse", "qos.ch", "google",
+                           "the apache software foundation")
+
+OSS_TYPE = "OSS"
+VENDOR_TYPE = "ベンダー系"
+UNKNOWN_TYPE = "要確認"
+
+
+def classify_source_type(group: str, license_: str, vendor: str) -> str:
+    """OSS か ベンダー系 かを推定して返す (判定不能は要確認)。"""
+    lic = (license_ or "").lower()
+    if lic:
+        has_oss = any(m in lic for m in OSS_LICENSE_MARKERS)
+        has_vendor = any(m in lic for m in VENDOR_LICENSE_MARKERS)
+        if has_vendor and not has_oss:
+            return VENDOR_TYPE
+        if has_oss:
+            return OSS_TYPE
+
+    g = (group or "").lower()
+    if g and g != UNKNOWN.lower():
+        if any(g == p or g.startswith(p + ".") or g.startswith(p)
+               for p in VENDOR_GROUP_PREFIXES):
+            return VENDOR_TYPE
+        if any(g == p or g.startswith(p) for p in OSS_GROUP_PREFIXES):
+            return OSS_TYPE
+
+    ven = (vendor or "").lower()
+    if ven:
+        if any(m in ven for m in VENDOR_NAME_MARKERS):
+            return VENDOR_TYPE
+        if any(m in ven for m in OSS_VENDOR_NAME_MARKERS):
+            return OSS_TYPE
+    return UNKNOWN_TYPE
+
 
 # ----------------------------------------------------------------------------
 # レポート 1 行分のデータ
@@ -183,6 +257,7 @@ class JarReport:
     description: str = ""   # 概要
     vendor: str = ""        # 提供元/ベンダー
     license: str = ""       # ライセンス
+    sourceType: str = ""    # 提供形態 (OSS / ベンダー系 / 要確認)
     homepage: str = ""      # プロジェクト URL
     coordSource: str = ""   # 座標の判定元 (pom.properties 等)
     inferred: bool = False  # 座標のいずれかを推測で補ったか
@@ -503,6 +578,9 @@ def build_report_for_jar(full_path: str, name: str, online: bool,
             homepage = homepage or meta.get("url", "")
             license_ = license_ or meta.get("license", "")
 
+    # --- 提供形態 (OSS / ベンダー系) の推定 ---
+    source_type = classify_source_type(group, license_, vendor)
+
     # --- 取得 URL ---
     url, repo_name, verified = resolve_download_url(
         group, artifact, version, cls_f, repos, online, timeout, logger)
@@ -524,6 +602,7 @@ def build_report_for_jar(full_path: str, name: str, online: bool,
         description=description,
         vendor=vendor,
         license=license_,
+        sourceType=source_type,
         homepage=homepage,
         coordSource=" + ".join(dict.fromkeys(sources)) or "ファイル名推定",
         inferred=inferred,
@@ -577,6 +656,7 @@ _COLUMNS = [
     ("概要", "description", 46, True),
     ("提供元/ベンダー", "vendor", 24, True),
     ("ライセンス", "license", 20, True),
+    ("種別(OSS/ベンダー)", "sourceType", 16, False),
     ("プロジェクト URL", "homepage", 30, False),
     ("座標の判定元", "coordSource", 22, True),
     ("推定", "inferred", 7, False),
@@ -588,6 +668,14 @@ _COLUMNS = [
     ("配置ディレクトリ", "targetDir", 30, False),
     ("備考", "note", 30, True),
 ]
+
+
+# 提供形態バッジの背景色。
+_SOURCE_TYPE_FILL = {
+    OSS_TYPE: "C6EFCE",       # 緑: OSS
+    VENDOR_TYPE: "FFD9A0",    # 橙: ベンダー系
+    UNKNOWN_TYPE: "E7E6E6",   # 灰: 要確認
+}
 
 
 def _human_size(n: int) -> str:
@@ -653,9 +741,12 @@ def write_xlsx(reports: List[JarReport], output: str, scan_dir: str,
     total = len(reports)
     n_unknown = sum(1 for r in reports if r.groupId == UNKNOWN)
     n_inferred = sum(1 for r in reports if r.inferred)
+    n_oss = sum(1 for r in reports if r.sourceType == OSS_TYPE)
+    n_vendor = sum(1 for r in reports if r.sourceType == VENDOR_TYPE)
     meta = ("生成日時: %s   |   走査対象: %s   |   総数: %d 件   |   "
-            "groupId 未確定: %d 件   |   推定補完: %d 件   |   モード: %s"
-            % (now, scan_dir, total, n_unknown, n_inferred,
+            "OSS: %d 件 / ベンダー系: %d 件   |   groupId 未確定: %d 件   |   "
+            "推定補完: %d 件   |   モード: %s"
+            % (now, scan_dir, total, n_oss, n_vendor, n_unknown, n_inferred,
                "online (Maven Central 照合)" if online else "offline"))
     ws.merge_cells("A2:%s2" % last_col)
     mcell = ws["A2"]
@@ -705,11 +796,18 @@ def write_xlsx(reports: List[JarReport], output: str, scan_dir: str,
             c.font = cell_font
             c.border = border
             c.alignment = Alignment(
-                horizontal="center" if attr in (None, "inferred") else "left",
+                horizontal="center"
+                if attr in (None, "inferred", "sourceType") else "left",
                 vertical="top",
                 wrap_text=wrap)
             if row_fill is not None:
                 c.fill = row_fill
+            # 種別バッジの色分け (行の塗りより優先)
+            if attr == "sourceType" and value:
+                badge = _SOURCE_TYPE_FILL.get(value)
+                if badge:
+                    c.fill = PatternFill("solid", fgColor=badge)
+                    c.font = Font(name="Meiryo", size=9, bold=True)
             # ハイパーリンク化
             if attr == "downloadUrl" and value:
                 c.hyperlink = value
@@ -759,6 +857,9 @@ def _write_legend_sheet(wb, c_header_bg, c_header_fg, c_inferred, c_unknown,
         (c_unknown, "groupId を特定できなかった行 (要手動補正)"),
         (c_inferred, "座標の一部をファイル名/マッピング/照合で推定・補完した行"),
         (c_band, "通常行 (交互の縞模様)"),
+        (_SOURCE_TYPE_FILL[OSS_TYPE], "種別セル: OSS (オープンソース)"),
+        (_SOURCE_TYPE_FILL[VENDOR_TYPE], "種別セル: ベンダー系 (商用/独自ライセンス)"),
+        (_SOURCE_TYPE_FILL[UNKNOWN_TYPE], "種別セル: 要確認 (判定材料が不足)"),
     ]
     r = 4
     for color, desc in color_rows:
@@ -786,6 +887,10 @@ def _write_legend_sheet(wb, c_header_bg, c_header_fg, c_inferred, c_unknown,
          "Maven Central 照合→ファイル名推定 の順に解決。"),
         ("classifier", "sources / javadoc 等の分類子 (ファイル名から推定)。"),
         ("ライブラリ名 / 概要", "pom.xml の name/description、MANIFEST、内蔵説明から構築。"),
+        ("種別(OSS/ベンダー)",
+         "提供形態の推定。ライセンス→groupId→ベンダー名の順で判定。"
+         "OSS=オープンソース、ベンダー系=商用/独自ライセンス、要確認=判定不能。"
+         "確定にはライセンス条項の確認を推奨。"),
         ("座標の判定元", "どの情報源で座標を決定したか。'ファイル名推定' は最も不確実。"),
         ("推定", "座標の一部を推測で補った場合に '推定' と表示。"),
         ("取得 URL", "Maven 標準レイアウトで生成した取得先。online 時は実在確認済み。"),
